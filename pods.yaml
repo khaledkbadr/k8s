@@ -1,0 +1,79 @@
+# It's best practice to put one container per pod but there're times when it makes more sense to package containers in a single pod
+# the most important thing is a single pod have single purpose.
+# Think like that, if conatainers have no problem running on diff machine then they should be on different pods.
+# Sometimes two containers access shared resources such as filesystems. a Pod that have two containers one to serve web and another to sync filesystem from a git repo, or rotate the logs...etc
+# using this approach instead of packaging everything into a single container allows us to limit resources or prioritirize a single container resource wise
+# suppose that Git synchronizer has a mem leak, we can limit when having separate containers
+# contianers in the same Pod have the same IP, Port space, Hostname, and can communicate using native interprocess communication channels
+
+# Pod manifests needs `metadata` for describing the Pod and its labels,
+# and `spec` for describing volumes, list of containers...etc
+
+############################################### Pod manifests ##############################################
+# simple Pod manifest below
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kuard  # Pod name
+spec:
+  containers:
+  - name: kuard # Container name
+    image: gcr.io/kuar-demo/kuard-amd64:blue
+    ports:
+      - containerPort: 8080  # exposed ports
+        name: http
+        protocol: TCP
+
+# to run this manifest use `kubectl apply -f <pods.yaml>`
+# when deleting a Pod it's moved to terminating status when it doesn't receive any new requests but finsihes its current work. By default it's 30 seconds
+
+############################################### Health Checks ##############################################
+# liveness probe: it ensure that each container of a Pod (if there's many) is running and live.
+# liveness probes can be an endpoint K8S GET or a Tcp port or exec scripts (for custom logic validations)
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kuard  # Pod name
+spec:
+  containers:
+  - name: kuard # Container name
+    image: gcr.io/kuar-demo/kuard-amd64:blue
+    livenessProbe:
+        httpGet:  # response code should be 2xx or 3xx
+          path: /healthy
+          port: 8080
+        initialDelaySeconds: 5  # start polling the probe after 5 seconds after all containers of Pod are created
+        timeoutSeconds: 1  # fail poll attempt after 1 second
+        periodSeconds: 10  # intervals of polling the container
+        failureThreshold: 3  # max number of polls before restarting the container/pod
+    ports:
+      - containerPort: 8080  # exposed ports
+        name: http
+        protocol: TCP
+# details of pod restarts should be seen in events in the output of `kubectl describe pods <podname>`
+# there's also readiness probe: ensures that container are ready to serve requests. conatainers which fails the readiness probes are removed from svc load balancer
+
+############################################### Memory Managment ##############################################
+# resource requests defines minimum required resource, so that k8s can achieve better utlization of our clusters' nodes
+# resource limits define resource limitations
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kuard
+spec:
+  containers:
+    - image: gcr.io/kuar-demo/kuard-amd64:blue
+      name: kuard
+      resources:
+        requests:  # specifying min resource requirements
+          cpu: "500m"  # cpu requests is implemented using `cpu-shares` functionality in the Linux kernel. balance happens whenever another pod is added to the node
+          memory: "128Mi"  # if a container added with more memory requirements k8s doesn't remove memory from containers.
+                           # but kill Pods with highest consumption; and more than requested; if node exceeded its memory limit then reschedule on diff node
+        limits:
+          cpu: "1000m"
+          memory: "256Mi"
+      ports:
+        - containerPort: 8080  # exposed ports
+          name: http
+          protocol: TCP
